@@ -160,6 +160,28 @@ fn small_button(text: &str) -> egui::Button<'static> {
     egui::Button::new(RichText::new(text.to_string()).size(14.0)).corner_radius(8)
 }
 
+/// Small clickable tag chip (filled when selected).
+fn chip(ui: &mut egui::Ui, text: &str, selected: bool) -> egui::Response {
+    ui.scope(|ui| {
+        ui.spacing_mut().button_padding = Vec2::new(10.0, 2.0);
+        ui.spacing_mut().interact_size.y = 24.0;
+        let (fill, fg, stroke) = if selected { (t().accent, t().on_accent, t().accent) } else { (t().card, t().text, t().border) };
+        ui.add(egui::Button::new(RichText::new(text).size(13.0).color(fg)).fill(fill).stroke(Stroke::new(1.0, stroke)).corner_radius(99))
+    })
+    .inner
+}
+
+/// Read-only tag label shown on a recipe.
+fn tag_pill(ui: &mut egui::Ui, text: &str) {
+    egui::Frame::new()
+        .fill(t().accent_soft)
+        .corner_radius(99)
+        .inner_margin(Margin::symmetric(10, 3))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).size(13.0).color(t().accent_dark));
+        });
+}
+
 /// A round numbered badge. Filled green with a tick when done.
 fn badge(ui: &mut egui::Ui, text: &str, done: bool) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::hover());
@@ -186,7 +208,11 @@ fn data_path() -> PathBuf {
 
 fn load_recipes() -> Vec<Recipe> {
     match std::fs::read_to_string(data_path()) {
-        Ok(text) => recipe::parse_json(&text).unwrap_or_default(),
+        Ok(text) => recipe::parse_json(text.trim_start_matches('\u{feff}')).unwrap_or_else(|_| {
+            // Unreadable file: keep a copy so the next save can't destroy it.
+            let _ = std::fs::copy(data_path(), data_path().with_extension("json.bak"));
+            Vec::new()
+        }),
         Err(_) => vec![recipe::sample()],
     }
 }
@@ -205,6 +231,10 @@ struct RecipeApp {
     done_ingredients: HashSet<usize>,
     done_steps: HashSet<usize>,
     filter: String,
+    /// Sidebar tag filter.
+    active_tag: Option<String>,
+    /// Text box for adding a custom tag in the editor.
+    new_tag: String,
     import: Option<ImportDialog>,
     confirm_delete: bool,
     status: String,
@@ -223,6 +253,8 @@ impl RecipeApp {
             done_ingredients: HashSet::new(),
             done_steps: HashSet::new(),
             filter: String::new(),
+            active_tag: None,
+            new_tag: String::new(),
             import: None,
             confirm_delete: false,
             status: String::new(),
@@ -324,6 +356,32 @@ impl RecipeApp {
         ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text("Search recipes").desired_width(f32::INFINITY).margin(Margin::symmetric(10, 7)));
         ui.add_space(6.0);
 
+        // Tag filter chips (only tags that exist on some recipe).
+        let mut all_tags: Vec<String> = Vec::new();
+        for r in &self.recipes {
+            for tag in &r.tags {
+                if !all_tags.iter().any(|x| x.eq_ignore_ascii_case(tag)) {
+                    all_tags.push(tag.clone());
+                }
+            }
+        }
+        all_tags.sort_by_key(|s| s.to_lowercase());
+        if self.active_tag.as_ref().is_some_and(|a| !all_tags.iter().any(|x| x.eq_ignore_ascii_case(a))) {
+            self.active_tag = None;
+        }
+        if !all_tags.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(5.0, 5.0);
+                for tag in &all_tags {
+                    let on = self.active_tag.as_ref().is_some_and(|a| a.eq_ignore_ascii_case(tag));
+                    if chip(ui, tag, on).clicked() {
+                        self.active_tag = if on { None } else { Some(tag.clone()) };
+                    }
+                }
+            });
+            ui.add_space(6.0);
+        }
+
         let ctx = ui.ctx().clone();
         egui::Panel::bottom("theme_picker")
             .frame(egui::Frame::new().inner_margin(Margin::symmetric(0, 8)))
@@ -358,11 +416,17 @@ impl RecipeApp {
 
         let needle = self.filter.to_lowercase();
         let mut click = None;
+        let active_tag = self.active_tag.clone();
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             for (i, r) in self.recipes.iter().enumerate() {
                 if !needle.is_empty() && !r.name.to_lowercase().contains(&needle) {
                     continue;
+                }
+                if let Some(tag) = &active_tag {
+                    if !r.tags.iter().any(|x| x.eq_ignore_ascii_case(tag)) {
+                        continue;
+                    }
                 }
                 let selected = i == self.selected;
                 let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 52.0), Sense::click());
@@ -484,6 +548,15 @@ impl RecipeApp {
         {
             let r = &self.recipes[self.selected];
             ui.label(RichText::new(&r.name).size(34.0).strong().color(t().text));
+            if !r.tags.is_empty() {
+                ui.add_space(2.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                    for tag in &r.tags {
+                        tag_pill(ui, tag);
+                    }
+                });
+            }
             if !r.description.trim().is_empty() {
                 ui.add_space(2.0);
                 ui.label(RichText::new(&r.description).size(16.5).color(t().muted));
@@ -613,6 +686,7 @@ impl RecipeApp {
 
     fn edit_view(&mut self, ui: &mut egui::Ui) {
         let target = &mut self.target;
+        let new_tag = &mut self.new_tag;
         let r = &mut self.recipes[self.selected];
         let mut changed = false;
 
@@ -626,6 +700,43 @@ impl RecipeApp {
                 *target = r.servings;
                 changed = true;
             }
+        });
+        ui.add_space(12.0);
+
+        card(ui, |ui| {
+            ui.label(RichText::new("Tags").size(21.0).strong());
+            ui.label(RichText::new("Click to add or remove. Tags let you filter recipes in the sidebar.").size(13.0).color(t().muted));
+            ui.add_space(6.0);
+            // Presets first, then any custom tags this recipe already has.
+            let mut shown: Vec<String> = recipe::PRESET_TAGS.iter().map(|s| s.to_string()).collect();
+            for tag in &r.tags {
+                if !shown.iter().any(|x| x.eq_ignore_ascii_case(tag)) {
+                    shown.push(tag.clone());
+                }
+            }
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                for tag in &shown {
+                    let pos = r.tags.iter().position(|x| x.eq_ignore_ascii_case(tag));
+                    if chip(ui, tag, pos.is_some()).clicked() {
+                        match pos {
+                            Some(p) => { r.tags.remove(p); }
+                            None => r.tags.push(tag.clone()),
+                        }
+                        changed = true;
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let resp = ui.add(egui::TextEdit::singleline(new_tag).hint_text("Custom tag").desired_width(180.0).margin(Margin::symmetric(8, 6)));
+                let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if (ui.add(small_button("Add")).clicked() || enter) && !new_tag.trim().is_empty() {
+                    recipe::add_tag(&mut r.tags, new_tag);
+                    new_tag.clear();
+                    changed = true;
+                }
+            });
         });
         ui.add_space(12.0);
 
@@ -713,15 +824,22 @@ impl RecipeApp {
             .default_width(560.0)
             .frame(egui::Frame::window(&ctx.global_style()).inner_margin(Margin::same(22)))
             .show(ctx, |ui| {
-                ui.label(RichText::new("Paste your recipe. The first line is the title. Put Ingredients and Instructions on their own lines, and add \"Serves 4\" to set the servings.").color(t().muted));
+                ui.label(RichText::new("Paste your recipe. The first line is the title. Put Ingredients and Instructions on their own lines, and add \"Serves 4\" or \"Tags: Dinner, Quick\" lines if you like.").color(t().muted));
                 ui.add_space(8.0);
-                ui.add(
-                    egui::TextEdit::multiline(&mut dialog.text)
-                        .desired_rows(14)
-                        .desired_width(f32::INFINITY)
-                        .margin(Margin::symmetric(12, 10))
-                        .hint_text("Pasta Night\nServes 4\nIngredients\n2 cups flour\n...\nInstructions\n1. Mix.\n2. Bake."),
-                );
+                // Fixed-height box: long pastes scroll inside it instead of stretching the window.
+                egui::ScrollArea::vertical()
+                    .id_salt("import_scroll")
+                    .min_scrolled_height(300.0)
+                    .max_height(300.0)
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut dialog.text)
+                                .desired_rows(14)
+                                .desired_width(f32::INFINITY)
+                                .margin(Margin::symmetric(12, 10))
+                                .hint_text("Pasta Night\nServes 4\nTags: Dinner, Quick\nIngredients\n2 cups flour\n...\nInstructions\n1. Mix.\n2. Bake."),
+                        );
+                    });
                 if let Some(e) = &dialog.error {
                     ui.add_space(4.0);
                     ui.colored_label(t().danger, e);

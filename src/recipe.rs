@@ -26,6 +26,30 @@ pub struct Recipe {
     pub steps: Vec<String>,
     #[serde(default)]
     pub notes: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// Suggested tags shown as one-click chips in the editor.
+pub const PRESET_TAGS: [&str; 10] =
+    ["Breakfast", "Lunch", "Dinner", "Dessert", "Snack", "Drink", "Side", "Vegetarian", "Quick", "Favorite"];
+
+/// Trim and capitalise the first letter so "dinner" and "Dinner" are the same tag.
+pub fn normalize_tag(s: &str) -> String {
+    let s = s.trim().trim_start_matches('#').trim();
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+/// Add a tag unless an equal one (ignoring case) is already there.
+pub fn add_tag(tags: &mut Vec<String>, raw: &str) {
+    let tag = normalize_tag(raw);
+    if !tag.is_empty() && !tags.iter().any(|t| t.eq_ignore_ascii_case(&tag)) {
+        tags.push(tag);
+    }
 }
 
 fn default_servings() -> u32 {
@@ -54,6 +78,7 @@ impl Recipe {
             ingredients: vec![Ingredient::default()],
             steps: vec![String::new()],
             notes: String::new(),
+            tags: Vec::new(),
         }
     }
 
@@ -315,6 +340,7 @@ pub fn parse_text(text: &str) -> Result<Recipe, String> {
         ingredients: Vec::new(),
         steps: Vec::new(),
         notes: String::new(),
+        tags: Vec::new(),
     };
     let mut section = Section::Intro;
     let mut saw_heading = false;
@@ -327,6 +353,13 @@ pub fn parse_text(text: &str) -> Result<Recipe, String> {
         }
         if let Some(n) = servings_from(line) {
             r.servings = n;
+            continue;
+        }
+        let lower = line.to_lowercase();
+        if let Some(rest) = ["tags:", "tag:", "category:", "categories:", "course:"].iter().find_map(|k| lower.strip_prefix(k).map(|_| &line[line.find(':').unwrap_or(0) + 1..])) {
+            for tag in rest.split([',', ';']) {
+                add_tag(&mut r.tags, tag);
+            }
             continue;
         }
         match section {
@@ -470,6 +503,15 @@ mod tests {
         r.rescale(8); // default base is 4 servings, so x2
         assert_eq!(r.ingredients[0].amount, "4");
         assert_eq!(r.servings, 8);
+    }
+
+    #[test]
+    fn tags() {
+        let r = parse_text("Pancakes\nTags: breakfast, #Quick; breakfast\nIngredients\n1 cup flour\nSteps\nMix.").unwrap();
+        assert_eq!(r.tags, vec!["Breakfast", "Quick"]);
+        // old saved recipes without a tags field still load
+        let old = parse_json(r#"{"name":"X"}"#).unwrap();
+        assert!(old[0].tags.is_empty());
     }
 
     #[test]
