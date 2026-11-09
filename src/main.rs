@@ -2,16 +2,16 @@
 
 mod recipe;
 
-use eframe::egui::{self, Align, Color32, CornerRadius, FontId, Layout, Margin, RichText, Sense, Stroke, Vec2};
+use eframe::egui::{self, Align, Color32, CornerRadius, FontFamily, FontId, Layout, Margin, RichText, Sense, Stroke, Vec2};
 use recipe::{display_unit, scaled_amount, Ingredient, Recipe};
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // ------------------------------------------------------------------ theme
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 struct Theme {
     name: &'static str,
     dark: bool,
@@ -22,7 +22,7 @@ struct Theme {
     text: Color32,
     muted: Color32,
     accent: Color32,
-    /// Accent used for text on cards / soft backgrounds (darker in light themes, lighter in dark ones).
+    /// Accent used for text (darker in light themes, lighter in dark ones).
     accent_dark: Color32,
     accent_soft: Color32,
     hover: Color32,
@@ -86,113 +86,130 @@ fn set_theme(ctx: &egui::Context, i: usize) {
     apply_theme(ctx);
 }
 
-const CONTENT_WIDTH: f32 = 740.0;
+const CONTENT_WIDTH: f32 = 880.0;
+
+fn serif(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name("serif".into()))
+}
+
+fn setup_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "lora".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/Lora.ttf"))),
+    );
+    // Lora first, then the default fonts for any glyph Lora lacks (arrows, symbols).
+    let mut list = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
+    list.insert(0, "lora".to_owned());
+    fonts.families.insert(FontFamily::Name("serif".into()), list);
+    ctx.set_fonts(fonts);
+}
 
 fn apply_theme(ctx: &egui::Context) {
     let mut v = if t().dark { egui::Visuals::dark() } else { egui::Visuals::light() };
     v.panel_fill = t().bg;
-    v.window_fill = t().card;
+    v.window_fill = t().bg;
     v.extreme_bg_color = t().card; // text edit background
     v.faint_bg_color = t().sidebar;
-    v.window_corner_radius = CornerRadius::same(14);
+    v.window_corner_radius = CornerRadius::same(6);
     v.window_stroke = Stroke::new(1.0, t().border);
+    v.window_shadow = egui::Shadow::NONE;
+    v.popup_shadow = egui::Shadow::NONE;
     v.selection.bg_fill = t().accent_soft;
     v.selection.stroke = Stroke::new(1.0, t().accent);
-    v.hyperlink_color = t().accent;
+    v.hyperlink_color = t().accent_dark;
 
     v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, t().border);
     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, t().text);
     for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
-        w.corner_radius = CornerRadius::same(8);
+        w.corner_radius = CornerRadius::same(4);
     }
+    // Flat buttons: hairline outline, fill only on hover.
     v.widgets.inactive.bg_fill = t().card;
-    v.widgets.inactive.weak_bg_fill = t().card;
+    v.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
     v.widgets.inactive.bg_stroke = Stroke::new(1.0, t().border);
     v.widgets.inactive.fg_stroke = Stroke::new(1.0, t().text);
-    v.widgets.hovered.bg_fill = t().accent_soft;
-    v.widgets.hovered.weak_bg_fill = t().accent_soft;
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, t().accent);
-    v.widgets.hovered.fg_stroke = Stroke::new(1.0, t().accent_dark);
-    v.widgets.active.bg_fill = t().accent_soft;
-    v.widgets.active.weak_bg_fill = t().accent_soft;
-    v.widgets.active.bg_stroke = Stroke::new(1.0, t().accent_dark);
-    v.widgets.active.fg_stroke = Stroke::new(1.0, t().accent_dark);
+    v.widgets.hovered.bg_fill = t().hover;
+    v.widgets.hovered.weak_bg_fill = t().hover;
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, t().muted);
+    v.widgets.hovered.fg_stroke = Stroke::new(1.0, t().text);
+    v.widgets.active.bg_fill = t().hover;
+    v.widgets.active.weak_bg_fill = t().hover;
+    v.widgets.active.bg_stroke = Stroke::new(1.0, t().text);
+    v.widgets.active.fg_stroke = Stroke::new(1.0, t().text);
     ctx.set_visuals(v);
 
     ctx.global_style_mut(|s| {
-        s.spacing.item_spacing = Vec2::new(10.0, 8.0);
-        s.spacing.button_padding = Vec2::new(14.0, 7.0);
-        s.spacing.interact_size.y = 32.0;
-        s.text_styles.insert(egui::TextStyle::Body, FontId::proportional(16.0));
-        s.text_styles.insert(egui::TextStyle::Button, FontId::proportional(15.0));
-        s.text_styles.insert(egui::TextStyle::Small, FontId::proportional(13.0));
-        s.text_styles.insert(egui::TextStyle::Heading, FontId::proportional(30.0));
+        s.spacing.item_spacing = Vec2::new(8.0, 6.0);
+        s.spacing.button_padding = Vec2::new(10.0, 4.0);
+        s.spacing.interact_size.y = 26.0;
+        s.text_styles.insert(egui::TextStyle::Body, FontId::proportional(15.0));
+        s.text_styles.insert(egui::TextStyle::Button, FontId::proportional(14.0));
+        s.text_styles.insert(egui::TextStyle::Small, FontId::proportional(12.5));
+        s.text_styles.insert(egui::TextStyle::Heading, serif(28.0));
     });
 }
 
-fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    egui::Frame::new()
-        .fill(t().card)
-        .stroke(Stroke::new(1.0, t().border))
-        .corner_radius(14)
-        .inner_margin(Margin::same(20))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            add(ui)
-        })
-        .inner
+// ------------------------------------------------------------------ small widgets
+
+/// Section heading with a hairline under it.
+fn heading(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(4.0);
+    ui.label(RichText::new(text).font(serif(22.0)).color(t().text));
+    let w = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 1.0), Sense::hover());
+    ui.painter().hline(rect.x_range(), rect.center().y, Stroke::new(1.0, t().border));
+    ui.add_space(6.0);
 }
 
-fn section_label(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(6.0);
-    ui.label(RichText::new(text.to_uppercase()).size(12.5).strong().color(t().muted).extra_letter_spacing(1.2));
-    ui.add_space(2.0);
+fn small_label(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(4.0);
+    ui.label(RichText::new(text).size(13.0).color(t().muted));
+}
+
+/// A text link: plain text, underlined on hover.
+fn link(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
+    let resp = ui.add(egui::Label::new(RichText::new(text).size(14.5).color(color)).sense(Sense::click()));
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        ui.painter().hline(resp.rect.x_range(), resp.rect.bottom() - 2.0, Stroke::new(1.0, color));
+    }
+    resp
+}
+
+/// A page tab: serif text with an underline when active.
+fn tab(ui: &mut egui::Ui, text: &str, active: bool) -> egui::Response {
+    let color = if active { t().text } else { t().muted };
+    let resp = ui.add(egui::Label::new(RichText::new(text).font(serif(18.0)).color(color)).sense(Sense::click()));
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if active {
+        ui.painter().hline(resp.rect.x_range(), resp.rect.bottom() + 1.0, Stroke::new(2.0, t().accent));
+    }
+    resp
 }
 
 fn primary_button(text: &str) -> egui::Button<'static> {
-    egui::Button::new(RichText::new(text.to_string()).color(t().on_accent).strong())
+    egui::Button::new(RichText::new(text.to_string()).color(t().on_accent))
         .fill(t().accent)
         .stroke(Stroke::NONE)
-        .corner_radius(10)
+        .corner_radius(4)
 }
 
 fn small_button(text: &str) -> egui::Button<'static> {
-    egui::Button::new(RichText::new(text.to_string()).size(14.0)).corner_radius(8)
+    egui::Button::new(RichText::new(text.to_string()).size(14.0))
 }
 
-/// Small clickable tag chip (filled when selected).
+/// Small tag button: outlined when off, filled when on.
 fn chip(ui: &mut egui::Ui, text: &str, selected: bool) -> egui::Response {
     ui.scope(|ui| {
-        ui.spacing_mut().button_padding = Vec2::new(10.0, 2.0);
-        ui.spacing_mut().interact_size.y = 24.0;
-        let (fill, fg, stroke) = if selected { (t().accent, t().on_accent, t().accent) } else { (t().card, t().text, t().border) };
-        ui.add(egui::Button::new(RichText::new(text).size(13.0).color(fg)).fill(fill).stroke(Stroke::new(1.0, stroke)).corner_radius(99))
+        ui.spacing_mut().button_padding = Vec2::new(8.0, 1.0);
+        ui.spacing_mut().interact_size.y = 22.0;
+        let (fill, fg, stroke) = if selected { (t().accent_soft, t().accent_dark, t().accent) } else { (Color32::TRANSPARENT, t().muted, t().border) };
+        ui.add(egui::Button::new(RichText::new(text).size(13.0).color(fg)).fill(fill).stroke(Stroke::new(1.0, stroke)))
     })
     .inner
-}
-
-/// Read-only tag label shown on a recipe.
-fn tag_pill(ui: &mut egui::Ui, text: &str) {
-    egui::Frame::new()
-        .fill(t().accent_soft)
-        .corner_radius(99)
-        .inner_margin(Margin::symmetric(10, 3))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).size(13.0).color(t().accent_dark));
-        });
-}
-
-/// A round numbered badge. Filled green with a tick when done.
-fn badge(ui: &mut egui::Ui, text: &str, done: bool) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::hover());
-    let p = ui.painter();
-    if done {
-        p.circle_filled(rect.center(), 15.0, t().done);
-        p.text(rect.center(), egui::Align2::CENTER_CENTER, "✓", FontId::proportional(15.0), t().on_accent);
-    } else {
-        p.circle_filled(rect.center(), 15.0, t().accent_soft);
-        p.text(rect.center(), egui::Align2::CENTER_CENTER, text, FontId::proportional(14.5), t().accent_dark);
-    }
 }
 
 // ------------------------------------------------------------------ data
@@ -297,6 +314,7 @@ impl RecipeApp {
         };
         match std::fs::read_to_string(&path) {
             Ok(text) => {
+                let text = text.trim_start_matches('\u{feff}').to_string();
                 let is_json = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("json"));
                 let result = if is_json { recipe::parse_json(&text) } else { recipe::parse_text(&text).map(|r| vec![r]) };
                 match result {
@@ -340,23 +358,24 @@ impl RecipeApp {
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(10.0);
-        ui.label(RichText::new("Recipe Book").size(22.0).strong().color(t().text));
-        ui.label(RichText::new(format!("{} recipe{}", self.recipes.len(), if self.recipes.len() == 1 { "" } else { "s" })).size(13.0).color(t().muted));
+        ui.label(RichText::new("Recipe Book").font(serif(26.0)).color(t().text));
         ui.add_space(8.0);
 
-        let w = ui.available_width();
-        if ui.add_sized([w, 38.0], primary_button("+  Import recipe")).clicked() {
-            self.import = Some(ImportDialog { text: String::new(), error: None });
-        }
-        if ui.add_sized([w, 34.0], egui::Button::new("New blank recipe").corner_radius(10)).clicked() {
-            self.add_recipe(Recipe::blank());
-            self.editing = true;
-        }
-        ui.add_space(4.0);
-        ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text("Search recipes").desired_width(f32::INFINITY).margin(Margin::symmetric(10, 7)));
+        ui.horizontal(|ui| {
+            let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+            if ui.add_sized([w, 30.0], egui::Button::new(RichText::new("Import").color(t().accent_dark))).clicked() {
+                self.import = Some(ImportDialog { text: String::new(), error: None });
+            }
+            if ui.add_sized([w, 30.0], egui::Button::new("New")).clicked() {
+                self.add_recipe(Recipe::blank());
+                self.editing = true;
+            }
+        });
+        ui.add_space(2.0);
+        ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text("Search").desired_width(f32::INFINITY).margin(Margin::symmetric(8, 6)));
         ui.add_space(6.0);
 
-        // Tag filter chips (only tags that exist on some recipe).
+        // Tag filter (only tags that exist on some recipe), shown as plain links.
         let mut all_tags: Vec<String> = Vec::new();
         for r in &self.recipes {
             for tag in &r.tags {
@@ -371,10 +390,15 @@ impl RecipeApp {
         }
         if !all_tags.is_empty() {
             ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = Vec2::new(5.0, 5.0);
+                ui.spacing_mut().item_spacing = Vec2::new(10.0, 2.0);
                 for tag in &all_tags {
                     let on = self.active_tag.as_ref().is_some_and(|a| a.eq_ignore_ascii_case(tag));
-                    if chip(ui, tag, on).clicked() {
+                    let color = if on { t().accent_dark } else { t().muted };
+                    let resp = link(ui, tag, color);
+                    if on {
+                        ui.painter().hline(resp.rect.x_range(), resp.rect.bottom() - 2.0, Stroke::new(1.5, t().accent));
+                    }
+                    if resp.clicked() {
                         self.active_tag = if on { None } else { Some(tag.clone()) };
                     }
                 }
@@ -384,31 +408,31 @@ impl RecipeApp {
 
         let ctx = ui.ctx().clone();
         egui::Panel::bottom("theme_picker")
-            .frame(egui::Frame::new().inner_margin(Margin::symmetric(0, 8)))
+            .frame(egui::Frame::new().inner_margin(Margin::symmetric(0, 10)))
             .show(ui, |ui| {
-                ui.label(RichText::new(format!("THEME · {}", t().name.to_uppercase())).size(12.0).strong().color(t().muted).extra_letter_spacing(1.0));
+                ui.label(RichText::new(format!("Theme: {}", t().name)).size(12.5).color(t().muted));
                 ui.add_space(2.0);
                 let current = THEME.load(Ordering::Relaxed);
                 let mut pick = None;
-                for row in THEMES.chunks(5).enumerate() {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 6.0;
-                        for (j, th) in row.1.iter().enumerate() {
-                            let i = row.0 * 5 + j;
-                            let (rect, resp) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
-                            let p = ui.painter();
-                            p.circle_filled(rect.center(), 15.0, th.bg);
-                            p.circle_stroke(rect.center(), 15.0, Stroke::new(1.0, th.border));
-                            p.circle_filled(rect.center(), 8.0, th.accent);
-                            if i == current {
-                                p.circle_stroke(rect.center(), 16.5, Stroke::new(2.5, t().accent_dark));
-                            }
-                            if resp.on_hover_text(format!("{} ({})", th.name, if th.dark { "dark" } else { "light" })).clicked() {
-                                pick = Some(i);
-                            }
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    for (i, th) in THEMES.iter().enumerate() {
+                        if i == 5 {
+                            ui.add_space(6.0);
                         }
-                    });
-                }
+                        let (rect, resp) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::click());
+                        let p = ui.painter();
+                        p.rect_filled(rect, 3, th.bg);
+                        p.rect_stroke(rect, 3, Stroke::new(1.0, th.muted), egui::StrokeKind::Inside);
+                        p.rect_filled(egui::Rect::from_min_size(rect.min + Vec2::new(9.0, 9.0), Vec2::splat(9.0)), egui::CornerRadius { nw: 0, ne: 0, sw: 0, se: 3 }, th.accent);
+                        if i == current {
+                            p.rect_stroke(rect.expand(2.5), 4, Stroke::new(1.5, t().text), egui::StrokeKind::Outside);
+                        }
+                        if resp.on_hover_text(th.name).clicked() {
+                            pick = Some(i);
+                        }
+                    }
+                });
                 if let Some(i) = pick {
                     set_theme(&ctx, i);
                 }
@@ -418,7 +442,7 @@ impl RecipeApp {
         let mut click = None;
         let active_tag = self.active_tag.clone();
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.spacing_mut().item_spacing.y = 2.0;
             for (i, r) in self.recipes.iter().enumerate() {
                 if !needle.is_empty() && !r.name.to_lowercase().contains(&needle) {
                     continue;
@@ -429,28 +453,27 @@ impl RecipeApp {
                     }
                 }
                 let selected = i == self.selected;
-                let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 52.0), Sense::click());
+                let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 50.0), Sense::click());
                 let fill = if selected {
-                    t().accent_soft
-                } else if resp.hovered() {
                     t().hover
+                } else if resp.hovered() {
+                    t().hover.gamma_multiply(0.6)
                 } else {
                     Color32::TRANSPARENT
                 };
-                ui.painter().rect_filled(rect, 10, fill);
-                if selected {
-                    let bar = egui::Rect::from_min_size(rect.left_top() + Vec2::new(0.0, 12.0), Vec2::new(3.0, rect.height() - 24.0));
-                    ui.painter().rect_filled(bar, 2, t().accent);
-                }
+                ui.painter().rect_filled(rect, 4, fill);
                 let name = if r.name.trim().is_empty() { "(untitled)" } else { r.name.as_str() };
-                let mut job = egui::text::LayoutJob::simple(name.to_string(), FontId::proportional(15.5), if selected { t().accent_dark } else { t().text }, rect.width() - 28.0);
+                let mut job = egui::text::LayoutJob::simple(name.to_string(), serif(16.5), t().text, rect.width() - 20.0);
                 job.wrap.max_rows = 1;
                 job.wrap.break_anywhere = true;
                 let g = ui.painter().layout_job(job);
-                ui.painter().galley(rect.left_top() + Vec2::new(14.0, 8.0), g, t().text);
-                let s = |n: usize, w: &str| format!("{n} {w}{}", if n == 1 { "" } else { "s" });
-                let sub = format!("{} · {}", s(r.servings as usize, "serving"), s(r.ingredients.len(), "ingredient"));
-                ui.painter().text(rect.left_top() + Vec2::new(14.0, 30.0), egui::Align2::LEFT_TOP, sub, FontId::proportional(12.5), t().muted);
+                ui.painter().galley(rect.left_top() + Vec2::new(10.0, 6.0), g, t().text);
+                let sub = if r.tags.is_empty() {
+                    format!("serves {}", r.servings)
+                } else {
+                    r.tags.join(" · ")
+                };
+                ui.painter().text(rect.left_top() + Vec2::new(10.0, 29.0), egui::Align2::LEFT_TOP, sub, FontId::proportional(12.5), t().muted);
                 if resp.clicked() {
                     click = Some(i);
                 }
@@ -465,11 +488,11 @@ impl RecipeApp {
 
     fn main_panel(&mut self, ui: &mut egui::Ui) {
         if self.recipes.is_empty() {
-            ui.add_space(120.0);
+            ui.add_space(100.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("No recipes yet").size(26.0).strong());
-                ui.add_space(6.0);
-                ui.label(RichText::new("Import one from the sidebar, or start a blank recipe.").color(t().muted));
+                ui.label(RichText::new("No recipes yet").font(serif(26.0)));
+                ui.add_space(4.0);
+                ui.label(RichText::new("Import one from the sidebar, or start a new one.").color(t().muted));
             });
             return;
         }
@@ -479,21 +502,21 @@ impl RecipeApp {
         let content_w = (avail - 48.0).clamp(300.0, CONTENT_WIDTH);
         let side = ((avail - content_w) / 2.0).max(0.0);
 
-        // Toolbar
+        // Top bar: page tabs on the left, plain links on the right.
         ui.horizontal(|ui| {
             ui.add_space(side);
-            ui.allocate_ui_with_layout(Vec2::new(content_w, 36.0), Layout::left_to_right(Align::Center), |ui| {
-                let view = ui.add(egui::Button::new(RichText::new("Recipe").strong()).selected(!self.editing).corner_radius(8));
-                let edit = ui.add(egui::Button::new(RichText::new("Edit").strong()).selected(self.editing).corner_radius(8));
-                if view.clicked() {
+            ui.allocate_ui_with_layout(Vec2::new(content_w, 32.0), Layout::left_to_right(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 22.0;
+                if tab(ui, "Recipe", !self.editing).clicked() {
                     self.editing = false;
                 }
-                if edit.clicked() {
+                if tab(ui, "Edit", self.editing).clicked() {
                     self.editing = true;
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 18.0;
                     if self.confirm_delete {
-                        if ui.add(egui::Button::new(RichText::new("Yes, delete").color(t().on_accent)).fill(t().danger).corner_radius(8)).clicked() {
+                        if link(ui, "Yes, delete", t().danger).clicked() {
                             self.recipes.remove(self.selected);
                             self.confirm_delete = false;
                             self.dirty = true;
@@ -502,22 +525,22 @@ impl RecipeApp {
                             }
                             return;
                         }
-                        if ui.add(small_button("Cancel")).clicked() {
+                        if link(ui, "Cancel", t().muted).clicked() {
                             self.confirm_delete = false;
                         }
-                        ui.label(RichText::new("Delete this recipe?").color(t().muted));
+                        ui.label(RichText::new("Delete this recipe?").size(14.5).color(t().muted));
                     } else {
-                        if ui.add(egui::Button::new(RichText::new("Delete").color(t().danger).size(14.0)).corner_radius(8)).clicked() {
+                        if link(ui, "Delete", t().muted).clicked() {
                             self.confirm_delete = true;
                         }
-                        if ui.add(small_button("Export")).clicked() {
+                        if link(ui, "Export", t().muted).clicked() {
                             self.export_current();
                         }
                     }
                 });
             });
         });
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         if self.recipes.is_empty() {
             return;
         }
@@ -527,11 +550,11 @@ impl RecipeApp {
                 ui.add_space(side);
                 ui.vertical(|ui| {
                     ui.set_width(content_w);
-                    ui.add_space(6.0);
+                    ui.add_space(8.0);
                     if self.editing {
                         self.edit_view(ui);
                     } else {
-                        self.read_view(ui);
+                        self.read_view(ui, content_w);
                     }
                     ui.add_space(40.0);
                 });
@@ -539,76 +562,73 @@ impl RecipeApp {
         });
     }
 
-    fn read_view(&mut self, ui: &mut egui::Ui) {
+    fn read_view(&mut self, ui: &mut egui::Ui, content_w: f32) {
         let base = self.recipes[self.selected].servings.max(1);
         let factor = self.target as f64 / base as f64;
         let mut apply = false;
 
-        // ---- header
+        // ---- title block
         {
             let r = &self.recipes[self.selected];
-            ui.label(RichText::new(&r.name).size(34.0).strong().color(t().text));
-            if !r.tags.is_empty() {
-                ui.add_space(2.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
-                    for tag in &r.tags {
-                        tag_pill(ui, tag);
-                    }
-                });
-            }
+            ui.label(RichText::new(&r.name).font(serif(40.0)).color(t().text));
             if !r.description.trim().is_empty() {
                 ui.add_space(2.0);
-                ui.label(RichText::new(&r.description).size(16.5).color(t().muted));
+                ui.label(RichText::new(&r.description).font(serif(17.0)).color(t().muted));
+            }
+            if !r.tags.is_empty() {
+                ui.add_space(2.0);
+                ui.label(RichText::new(r.tags.join("  ·  ")).size(13.5).color(t().accent_dark));
             }
         }
+        ui.add_space(10.0);
+
+        // ---- servings line
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Serves").font(serif(17.0)));
+            if ui.add_sized([26.0, 26.0], egui::Button::new("−")).clicked() && self.target > 1 {
+                self.target -= 1;
+            }
+            ui.add(egui::DragValue::new(&mut self.target).range(1..=1000).min_decimals(0));
+            if ui.add_sized([26.0, 26.0], egui::Button::new("+")).clicked() {
+                self.target += 1;
+            }
+            if self.target != base {
+                ui.add_space(8.0);
+                ui.label(RichText::new(format!("recipe makes {base}, ×{}", recipe::format_number(factor))).size(13.5).color(t().muted));
+                if link(ui, "Reset", t().accent_dark).clicked() {
+                    self.target = base;
+                }
+                if link(ui, "Save as new base", t().accent_dark).on_hover_text("Rewrite the stored amounts for this serving size").clicked() {
+                    apply = true;
+                }
+            }
+        });
         ui.add_space(14.0);
 
-        // ---- servings card
-        card(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Servings").size(16.0).strong());
-                ui.add_space(6.0);
-                if ui.add_sized([34.0, 34.0], egui::Button::new(RichText::new("−").size(18.0)).corner_radius(17)).clicked() && self.target > 1 {
-                    self.target -= 1;
-                }
-                ui.add(egui::DragValue::new(&mut self.target).range(1..=1000).min_decimals(0));
-                if ui.add_sized([34.0, 34.0], egui::Button::new(RichText::new("+").size(18.0)).corner_radius(17)).clicked() {
-                    self.target += 1;
-                }
-                if self.target != base {
-                    ui.add_space(6.0);
-                    ui.label(RichText::new(format!("recipe makes {base} · ×{}", recipe::format_number(factor))).size(14.0).color(t().muted));
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.add(small_button("Save as new base")).on_hover_text("Rewrite the stored amounts for this serving size").clicked() {
-                            apply = true;
-                        }
-                        if ui.add(small_button("Reset")).clicked() {
-                            self.target = base;
-                        }
-                    });
-                }
-            });
-        });
-        ui.add_space(12.0);
+        let wide = content_w >= 680.0;
+        let left_w = if wide { 280.0 } else { content_w };
+        let gap = 44.0;
+        let right_w = if wide { content_w - left_w - gap } else { content_w };
 
-        // ---- ingredients
         let r = &self.recipes[self.selected];
-        card(ui, |ui| {
-            ui.label(RichText::new("Ingredients").size(21.0).strong());
-            ui.add_space(8.0);
+        let done_ing = &mut self.done_ingredients;
+        let done_steps = &mut self.done_steps;
+
+        let ingredients = |ui: &mut egui::Ui, done: &mut HashSet<usize>| {
+            heading(ui, "Ingredients");
             let mut toggle = None;
-            egui::Grid::new("ingredients").num_columns(2).spacing([18.0, 10.0]).show(ui, |ui| {
+            egui::Grid::new("ingredients").num_columns(2).spacing([14.0, 8.0]).show(ui, |ui| {
                 for (i, ing) in r.ingredients.iter().enumerate() {
-                    let done = self.done_ingredients.contains(&i);
+                    let is_done = done.contains(&i);
                     let amt = scaled_amount(&ing.amount, factor);
                     let unit = display_unit(&ing.unit, &amt);
                     let qty = [amt, unit].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join(" ");
-                    let mut q = RichText::new(qty).strong().size(16.0).color(t().accent_dark);
-                    let mut n = RichText::new(&ing.name).size(16.0);
-                    if done {
+                    let (mut q, mut n) = (RichText::new(qty).size(15.5), RichText::new(&ing.name).size(15.5));
+                    if is_done {
                         q = q.color(t().muted).strikethrough();
                         n = n.color(t().muted).strikethrough();
+                    } else {
+                        q = q.color(t().accent_dark);
                     }
                     let a = ui.add(egui::Label::new(q).sense(Sense::click()));
                     let b = ui.add(egui::Label::new(n).sense(Sense::click()).wrap());
@@ -622,27 +642,27 @@ impl RecipeApp {
                 }
             });
             if let Some(i) = toggle {
-                if !self.done_ingredients.remove(&i) {
-                    self.done_ingredients.insert(i);
+                if !done.remove(&i) {
+                    done.insert(i);
                 }
             }
             if r.ingredients.is_empty() {
-                ui.label(RichText::new("No ingredients yet. Switch to Edit to add some.").color(t().muted));
+                ui.label(RichText::new("No ingredients yet.").color(t().muted));
             }
-        });
-        ui.add_space(12.0);
+        };
 
-        // ---- instructions
-        card(ui, |ui| {
-            ui.label(RichText::new("Instructions").size(21.0).strong());
-            ui.add_space(8.0);
+        let method = |ui: &mut egui::Ui, done: &mut HashSet<usize>| {
+            heading(ui, "Method");
             let mut toggle = None;
             for (i, step) in r.steps.iter().enumerate() {
-                let done = self.done_steps.contains(&i);
+                let is_done = done.contains(&i);
                 ui.horizontal_top(|ui| {
-                    badge(ui, &(i + 1).to_string(), done);
-                    let mut st = RichText::new(step).size(16.5);
-                    if done {
+                    ui.spacing_mut().item_spacing.x = 14.0;
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(26.0, 28.0), Sense::hover());
+                    let col = if is_done { t().muted } else { t().accent };
+                    ui.painter().text(rect.right_top(), egui::Align2::RIGHT_TOP, (i + 1).to_string(), serif(26.0), col);
+                    let mut st = RichText::new(step).size(16.0);
+                    if is_done {
                         st = st.color(t().muted).strikethrough();
                     }
                     let resp = ui.add(egui::Label::new(st).sense(Sense::click()).wrap());
@@ -653,34 +673,54 @@ impl RecipeApp {
                         toggle = Some(i);
                     }
                 });
-                ui.add_space(8.0);
+                ui.add_space(10.0);
             }
             if let Some(i) = toggle {
-                if !self.done_steps.remove(&i) {
-                    self.done_steps.insert(i);
+                if !done.remove(&i) {
+                    done.insert(i);
                 }
             }
             if r.steps.is_empty() {
-                ui.label(RichText::new("No steps yet. Switch to Edit to add some.").color(t().muted));
+                ui.label(RichText::new("No steps yet.").color(t().muted));
             }
-            ui.label(RichText::new("Click a step or ingredient to tick it off.").size(12.5).color(t().muted));
-        });
+        };
 
-        if !r.notes.trim().is_empty() {
-            ui.add_space(12.0);
-            egui::Frame::new().fill(t().accent_soft).corner_radius(14).inner_margin(Margin::same(20)).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(RichText::new("Notes").size(18.0).strong().color(t().accent_dark));
-                ui.add_space(4.0);
-                ui.label(RichText::new(&r.notes).size(15.5).color(t().text));
+        if wide {
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.vertical(|ui| {
+                    ui.set_width(left_w);
+                    ingredients(ui, done_ing);
+                });
+                ui.add_space(gap);
+                ui.vertical(|ui| {
+                    ui.set_width(right_w);
+                    method(ui, done_steps);
+                });
             });
+        } else {
+            ingredients(ui, done_ing);
+            ui.add_space(14.0);
+            method(ui, done_steps);
         }
 
+        if !r.notes.trim().is_empty() {
+            ui.add_space(14.0);
+            heading(ui, "Notes");
+            let resp = egui::Frame::new().inner_margin(Margin { left: 14, right: 0, top: 0, bottom: 0 }).show(ui, |ui| {
+                ui.label(RichText::new(&r.notes).font(serif(16.0)).color(t().muted));
+            });
+            let rc = resp.response.rect;
+            ui.painter().vline(rc.left() + 2.0, rc.y_range(), Stroke::new(2.0, t().border));
+        }
+        ui.add_space(8.0);
+        ui.label(RichText::new("Click an ingredient or step to cross it off.").size(12.5).color(t().muted));
+
         if apply {
-            let t = self.target;
-            self.recipes[self.selected].rescale(t);
+            let target = self.target;
+            self.recipes[self.selected].rescale(target);
             self.dirty = true;
-            self.status = format!("Amounts rewritten for {t} servings.");
+            self.status = format!("Amounts rewritten for {target} servings.");
         }
     }
 
@@ -690,119 +730,106 @@ impl RecipeApp {
         let r = &mut self.recipes[self.selected];
         let mut changed = false;
 
-        card(ui, |ui| {
-            section_label(ui, "Name");
-            changed |= ui.add(egui::TextEdit::singleline(&mut r.name).font(FontId::proportional(20.0)).desired_width(f32::INFINITY).margin(Margin::symmetric(10, 8))).changed();
-            section_label(ui, "Description");
-            changed |= ui.add(egui::TextEdit::multiline(&mut r.description).desired_rows(2).desired_width(f32::INFINITY).margin(Margin::symmetric(10, 8))).changed();
-            section_label(ui, "Servings this recipe makes");
-            if ui.add(egui::DragValue::new(&mut r.servings).range(1..=1000)).changed() {
-                *target = r.servings;
-                changed = true;
-            }
-        });
-        ui.add_space(12.0);
+        small_label(ui, "Name");
+        changed |= ui.add(egui::TextEdit::singleline(&mut r.name).font(serif(22.0)).desired_width(f32::INFINITY).margin(Margin::symmetric(8, 7))).changed();
+        small_label(ui, "Description");
+        changed |= ui.add(egui::TextEdit::multiline(&mut r.description).desired_rows(2).desired_width(f32::INFINITY).margin(Margin::symmetric(8, 7))).changed();
+        small_label(ui, "Servings this recipe makes");
+        if ui.add(egui::DragValue::new(&mut r.servings).range(1..=1000)).changed() {
+            *target = r.servings;
+            changed = true;
+        }
+        ui.add_space(14.0);
 
-        card(ui, |ui| {
-            ui.label(RichText::new("Tags").size(21.0).strong());
-            ui.label(RichText::new("Click to add or remove. Tags let you filter recipes in the sidebar.").size(13.0).color(t().muted));
-            ui.add_space(6.0);
-            // Presets first, then any custom tags this recipe already has.
-            let mut shown: Vec<String> = recipe::PRESET_TAGS.iter().map(|s| s.to_string()).collect();
-            for tag in &r.tags {
-                if !shown.iter().any(|x| x.eq_ignore_ascii_case(tag)) {
-                    shown.push(tag.clone());
-                }
+        heading(ui, "Tags");
+        // Presets first, then any custom tags this recipe already has.
+        let mut shown: Vec<String> = recipe::PRESET_TAGS.iter().map(|s| s.to_string()).collect();
+        for tag in &r.tags {
+            if !shown.iter().any(|x| x.eq_ignore_ascii_case(tag)) {
+                shown.push(tag.clone());
             }
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
-                for tag in &shown {
-                    let pos = r.tags.iter().position(|x| x.eq_ignore_ascii_case(tag));
-                    if chip(ui, tag, pos.is_some()).clicked() {
-                        match pos {
-                            Some(p) => { r.tags.remove(p); }
-                            None => r.tags.push(tag.clone()),
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+            for tag in &shown {
+                let pos = r.tags.iter().position(|x| x.eq_ignore_ascii_case(tag));
+                if chip(ui, tag, pos.is_some()).clicked() {
+                    match pos {
+                        Some(p) => {
+                            r.tags.remove(p);
                         }
-                        changed = true;
+                        None => r.tags.push(tag.clone()),
                     }
-                }
-            });
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                let resp = ui.add(egui::TextEdit::singleline(new_tag).hint_text("Custom tag").desired_width(180.0).margin(Margin::symmetric(8, 6)));
-                let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if (ui.add(small_button("Add")).clicked() || enter) && !new_tag.trim().is_empty() {
-                    recipe::add_tag(&mut r.tags, new_tag);
-                    new_tag.clear();
                     changed = true;
                 }
+            }
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let resp = ui.add(egui::TextEdit::singleline(new_tag).hint_text("Custom tag").desired_width(180.0).margin(Margin::symmetric(8, 5)));
+            let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if (ui.add(small_button("Add")).clicked() || enter) && !new_tag.trim().is_empty() {
+                recipe::add_tag(&mut r.tags, new_tag);
+                new_tag.clear();
+                changed = true;
+            }
+        });
+        ui.add_space(14.0);
+
+        heading(ui, "Ingredients");
+        ui.label(RichText::new("Amount accepts 2, 0.5, 1/2 or 1 1/2. Leave it empty for \"salt to taste\".").size(13.0).color(t().muted));
+        ui.add_space(4.0);
+        let mut remove = None;
+        let mut swap = None;
+        let count = r.ingredients.len();
+        for (i, ing) in r.ingredients.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                changed |= ui.add(egui::TextEdit::singleline(&mut ing.amount).desired_width(60.0).hint_text("Amt").margin(Margin::symmetric(8, 5))).changed();
+                changed |= ui.add(egui::TextEdit::singleline(&mut ing.unit).desired_width(76.0).hint_text("Unit").margin(Margin::symmetric(8, 5))).changed();
+                let name_w = (ui.available_width() - 3.0 * 30.0 - 14.0).max(80.0);
+                changed |= ui.add(egui::TextEdit::singleline(&mut ing.name).desired_width(name_w).hint_text("Ingredient").margin(Margin::symmetric(8, 5))).changed();
+                if ui.add_enabled(i > 0, egui::Button::new("↑").min_size(Vec2::splat(26.0))).clicked() { swap = Some((i, i - 1)); }
+                if ui.add_enabled(i + 1 < count, egui::Button::new("↓").min_size(Vec2::splat(26.0))).clicked() { swap = Some((i, i + 1)); }
+                if ui.add(egui::Button::new(RichText::new("×").color(t().danger).size(16.0)).min_size(Vec2::splat(26.0))).clicked() { remove = Some(i); }
             });
-        });
-        ui.add_space(12.0);
+        }
+        if let Some((a, b)) = swap { r.ingredients.swap(a, b); changed = true; }
+        if let Some(i) = remove { r.ingredients.remove(i); changed = true; }
+        if ui.add(small_button("Add ingredient")).clicked() {
+            r.ingredients.push(Ingredient::default());
+            changed = true;
+        }
+        ui.add_space(14.0);
 
-        card(ui, |ui| {
-            ui.label(RichText::new("Ingredients").size(21.0).strong());
-            ui.label(RichText::new("Amount accepts 2, 0.5, 1/2 or 1 1/2. Leave it empty for \"salt to taste\".").size(13.0).color(t().muted));
-            ui.add_space(6.0);
-            let mut remove = None;
-            let mut swap = None;
-            let count = r.ingredients.len();
-            for (i, ing) in r.ingredients.iter_mut().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    changed |= ui.add(egui::TextEdit::singleline(&mut ing.amount).desired_width(60.0).hint_text("Amt").margin(Margin::symmetric(8, 6))).changed();
-                    changed |= ui.add(egui::TextEdit::singleline(&mut ing.unit).desired_width(76.0).hint_text("Unit").margin(Margin::symmetric(8, 6))).changed();
-                    let name_w = (ui.available_width() - 3.0 * 34.0 - 12.0).max(80.0);
-                    changed |= ui.add(egui::TextEdit::singleline(&mut ing.name).desired_width(name_w).hint_text("Ingredient").margin(Margin::symmetric(8, 6))).changed();
-                    if ui.add_enabled(i > 0, egui::Button::new("↑").min_size(Vec2::splat(28.0))).clicked() { swap = Some((i, i - 1)); }
-                    if ui.add_enabled(i + 1 < count, egui::Button::new("↓").min_size(Vec2::splat(28.0))).clicked() { swap = Some((i, i + 1)); }
-                    if ui.add(egui::Button::new(RichText::new("×").color(t().danger).size(17.0)).min_size(Vec2::splat(28.0))).clicked() { remove = Some(i); }
+        heading(ui, "Method");
+        let mut remove = None;
+        let mut swap = None;
+        let count = r.steps.len();
+        for (i, step) in r.steps.iter_mut().enumerate() {
+            ui.horizontal_top(|ui| {
+                ui.label(RichText::new(format!("{}", i + 1)).font(serif(20.0)).color(t().accent));
+                let w = (ui.available_width() - 26.0 - 16.0).max(120.0);
+                changed |= ui.add(egui::TextEdit::multiline(step).desired_rows(2).desired_width(w).margin(Margin::symmetric(8, 6))).changed();
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    if ui.add_enabled(i > 0, egui::Button::new("↑").min_size(Vec2::splat(26.0))).clicked() { swap = Some((i, i - 1)); }
+                    if ui.add_enabled(i + 1 < count, egui::Button::new("↓").min_size(Vec2::splat(26.0))).clicked() { swap = Some((i, i + 1)); }
+                    if ui.add(egui::Button::new(RichText::new("×").color(t().danger).size(16.0)).min_size(Vec2::splat(26.0))).clicked() { remove = Some(i); }
                 });
-            }
-            if let Some((a, b)) = swap { r.ingredients.swap(a, b); changed = true; }
-            if let Some(i) = remove { r.ingredients.remove(i); changed = true; }
-            ui.add_space(4.0);
-            if ui.add(small_button("+  Add ingredient")).clicked() {
-                r.ingredients.push(Ingredient::default());
-                changed = true;
-            }
-        });
-        ui.add_space(12.0);
+            });
+            ui.add_space(2.0);
+        }
+        if let Some((a, b)) = swap { r.steps.swap(a, b); changed = true; }
+        if let Some(i) = remove { r.steps.remove(i); changed = true; }
+        if ui.add(small_button("Add step")).clicked() {
+            r.steps.push(String::new());
+            changed = true;
+        }
+        ui.add_space(14.0);
 
-        card(ui, |ui| {
-            ui.label(RichText::new("Instructions").size(21.0).strong());
-            ui.add_space(6.0);
-            let mut remove = None;
-            let mut swap = None;
-            let count = r.steps.len();
-            for (i, step) in r.steps.iter_mut().enumerate() {
-                ui.horizontal_top(|ui| {
-                    badge(ui, &(i + 1).to_string(), false);
-                    let w = (ui.available_width() - 28.0 - 18.0).max(120.0);
-                    changed |= ui.add(egui::TextEdit::multiline(step).desired_rows(2).desired_width(w).margin(Margin::symmetric(10, 8))).changed();
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 4.0;
-                        if ui.add_enabled(i > 0, egui::Button::new("↑").min_size(Vec2::splat(28.0))).clicked() { swap = Some((i, i - 1)); }
-                        if ui.add_enabled(i + 1 < count, egui::Button::new("↓").min_size(Vec2::splat(28.0))).clicked() { swap = Some((i, i + 1)); }
-                        if ui.add(egui::Button::new(RichText::new("×").color(t().danger).size(17.0)).min_size(Vec2::splat(28.0))).clicked() { remove = Some(i); }
-                    });
-                });
-                ui.add_space(4.0);
-            }
-            if let Some((a, b)) = swap { r.steps.swap(a, b); changed = true; }
-            if let Some(i) = remove { r.steps.remove(i); changed = true; }
-            if ui.add(small_button("+  Add step")).clicked() {
-                r.steps.push(String::new());
-                changed = true;
-            }
-        });
-        ui.add_space(12.0);
-
-        card(ui, |ui| {
-            ui.label(RichText::new("Notes").size(21.0).strong());
-            ui.add_space(4.0);
-            changed |= ui.add(egui::TextEdit::multiline(&mut r.notes).desired_rows(3).desired_width(f32::INFINITY).margin(Margin::symmetric(10, 8))).changed();
-        });
+        heading(ui, "Notes");
+        changed |= ui.add(egui::TextEdit::multiline(&mut r.notes).desired_rows(3).desired_width(f32::INFINITY).margin(Margin::symmetric(8, 6))).changed();
 
         if changed {
             self.dirty = true;
@@ -816,13 +843,13 @@ impl RecipeApp {
         let mut open = true;
         let mut do_paste = false;
         let mut do_file = false;
-        egui::Window::new(RichText::new("Import a recipe").size(20.0).strong())
+        egui::Window::new(RichText::new("Import a recipe").font(serif(20.0)))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
             .default_width(560.0)
-            .frame(egui::Frame::window(&ctx.global_style()).inner_margin(Margin::same(22)))
+            .frame(egui::Frame::window(&ctx.global_style()).inner_margin(Margin::same(20)))
             .show(ctx, |ui| {
                 ui.label(RichText::new("Paste your recipe. The first line is the title. Put Ingredients and Instructions on their own lines, and add \"Serves 4\" or \"Tags: Dinner, Quick\" lines if you like.").color(t().muted));
                 ui.add_space(8.0);
@@ -836,7 +863,7 @@ impl RecipeApp {
                             egui::TextEdit::multiline(&mut dialog.text)
                                 .desired_rows(14)
                                 .desired_width(f32::INFINITY)
-                                .margin(Margin::symmetric(12, 10))
+                                .margin(Margin::symmetric(10, 8))
                                 .hint_text("Pasta Night\nServes 4\nTags: Dinner, Quick\nIngredients\n2 cups flour\n...\nInstructions\n1. Mix.\n2. Bake."),
                         );
                     });
@@ -846,8 +873,8 @@ impl RecipeApp {
                 }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.add_sized([170.0, 36.0], primary_button("Import pasted text")).clicked() { do_paste = true; }
-                    if ui.add_sized([170.0, 36.0], egui::Button::new("Open file…").corner_radius(10)).on_hover_text(".txt, .md or .json").clicked() { do_file = true; }
+                    if ui.add_sized([150.0, 32.0], primary_button("Import")).clicked() { do_paste = true; }
+                    if ui.add_sized([150.0, 32.0], egui::Button::new("Open file…")).on_hover_text(".txt, .md or .json").clicked() { do_file = true; }
                 });
             });
 
@@ -884,15 +911,15 @@ impl RecipeApp {
 impl eframe::App for RecipeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::Panel::left("list")
-            .default_size(270.0)
+            .default_size(260.0)
             .size_range(220.0..=360.0)
             .frame(egui::Frame::new().fill(t().sidebar).inner_margin(Margin::symmetric(14, 8)).stroke(Stroke::new(1.0, t().border)))
             .show(ui, |ui| self.sidebar(ui));
         egui::Panel::bottom("status")
-            .frame(egui::Frame::new().fill(t().bg).inner_margin(Margin::symmetric(16, 6)))
+            .frame(egui::Frame::new().fill(t().bg).inner_margin(Margin::symmetric(16, 5)))
             .show(ui, |ui| {
                 let msg = if self.status.is_empty() { "Changes save automatically." } else { self.status.as_str() };
-                ui.label(RichText::new(msg).size(12.5).color(t().muted));
+                ui.label(RichText::new(msg).size(12.0).color(t().muted));
             });
         egui::CentralPanel::default_margins().show(ui, |ui| self.main_panel(ui));
         let ctx = ui.ctx().clone();
@@ -914,6 +941,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             load_theme();
+            setup_fonts(&cc.egui_ctx);
             apply_theme(&cc.egui_ctx);
             Ok(Box::new(RecipeApp::new()))
         }),
